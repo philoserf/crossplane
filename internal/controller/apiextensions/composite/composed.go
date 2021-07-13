@@ -35,6 +35,7 @@ import (
 	"github.com/crossplane/crossplane-runtime/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/pkg/resource"
 	"github.com/crossplane/crossplane-runtime/pkg/resource/unstructured/composed"
+
 	v1 "github.com/crossplane/crossplane/apis/apiextensions/v1"
 	"github.com/crossplane/crossplane/internal/xcrd"
 )
@@ -230,6 +231,10 @@ func (a *GarbageCollectingAssociator) AssociateTemplates(ctx context.Context, cr
 	}
 
 	for _, ref := range cr.GetResourceReferences() {
+		// If reference does not have a name then we haven't rendered it yet.
+		if ref.Name == "" {
+			continue
+		}
 		cd := composed.New(composed.FromReference(ref))
 		nn := types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}
 		err := a.client.Get(ctx, nn, cd)
@@ -331,6 +336,21 @@ func (r *APIDryRunRenderer) Render(ctx context.Context, cp resource.Composite, c
 		return errors.New(errNamePrefix)
 	}
 
+	// Unmarshalling the template will overwrite any existing fields, so we must
+	// restore the existing name, if any. We also set generate name in case we
+	// haven't yet named this composed resource.
+	cd.SetGenerateName(cp.GetLabels()[xcrd.LabelKeyNamePrefixForComposed] + "-")
+	cd.SetName(name)
+	cd.SetNamespace(namespace)
+
+	onlyPatches := []v1.PatchType{v1.PatchTypeFromCompositeFieldPath, v1.PatchTypeCombineFromComposite}
+	for i, p := range t.Patches {
+		if err := p.Apply(cp, cd, onlyPatches...); err != nil {
+			return errors.Wrapf(err, errFmtPatch, i)
+		}
+	}
+
+	// Composed labels and annotations should be rendered after patches are applied
 	meta.AddLabels(cd, map[string]string{
 		xcrd.LabelKeyNamePrefixForComposed: cp.GetLabels()[xcrd.LabelKeyNamePrefixForComposed],
 		xcrd.LabelKeyClaimName:             cp.GetLabels()[xcrd.LabelKeyClaimName],
@@ -339,20 +359,6 @@ func (r *APIDryRunRenderer) Render(ctx context.Context, cp resource.Composite, c
 
 	if t.Name != nil {
 		SetCompositionResourceName(cd, *t.Name)
-	}
-
-	// Unmarshalling the template will overwrite any existing fields, so we must
-	// restore the existing name, if any. We also set generate name in case we
-	// haven't yet named this composed resource.
-	cd.SetGenerateName(cp.GetLabels()[xcrd.LabelKeyNamePrefixForComposed] + "-")
-	cd.SetName(name)
-	cd.SetNamespace(namespace)
-
-	onlyPatches := []v1.PatchType{v1.PatchTypeFromCompositeFieldPath}
-	for i, p := range t.Patches {
-		if err := p.Apply(cp, cd, onlyPatches...); err != nil {
-			return errors.Wrapf(err, errFmtPatch, i)
-		}
 	}
 
 	// We do this last to ensure that a Composition cannot influence owner (and
@@ -381,7 +387,7 @@ func (r *APIDryRunRenderer) Render(ctx context.Context, cp resource.Composite, c
 // RenderComposite renders the supplied composite resource using the supplied composed
 // resource and template.
 func RenderComposite(_ context.Context, cp resource.Composite, cd resource.Composed, t v1.ComposedTemplate) error {
-	onlyPatches := []v1.PatchType{v1.PatchTypeToCompositeFieldPath}
+	onlyPatches := []v1.PatchType{v1.PatchTypeToCompositeFieldPath, v1.PatchTypeCombineToComposite}
 	for i, p := range t.Patches {
 		if err := p.Apply(cp, cd, onlyPatches...); err != nil {
 			return errors.Wrapf(err, errFmtPatch, i)

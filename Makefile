@@ -4,7 +4,7 @@
 PROJECT_NAME := crossplane
 PROJECT_REPO := github.com/crossplane/$(PROJECT_NAME)
 
-PLATFORMS ?= linux_amd64 linux_arm64 linux_arm darwin_amd64 windows_amd64
+PLATFORMS ?= linux_amd64 linux_arm64 linux_arm linux_ppc64le darwin_amd64 windows_amd64
 # -include will silently skip missing files, which allows us
 # to load those files with a target in the Makefile. If only
 # "include" was used, the make command would fail and refuse
@@ -95,8 +95,7 @@ crds.clean:
 	@find $(CRD_DIR) -name '*.yaml.sed' -delete || $(FAIL)
 	@$(OK) cleaned generated CRDs
 
-generate: $(HELM) $(KUSTOMIZE) go.vendor go.generate crds.clean gen-kustomize-crds gen-install-doc
-	@$(OK) Finished generating
+generate.run: crds.clean gen-kustomize-crds gen-install-doc
 
 gen-install-doc:
 	@$(INFO) Generating install documentation from Helm chart
@@ -122,16 +121,6 @@ cobertura:
 	@cat $(GO_TEST_OUTPUT)/coverage.txt | \
 		grep -v zz_generated.deepcopy | \
 		$(GOCOVER_COBERTURA) > $(GO_TEST_OUTPUT)/cobertura-coverage.xml
-
-# Ensure a PR is ready for review.
-reviewable: generate lint
-	@go mod tidy
-
-# Ensure branch is clean.
-check-diff: reviewable
-	@$(INFO) checking that branch is clean
-	@test -z "$$(git status --porcelain)" || $(FAIL)
-	@$(OK) branch is clean
 
 # integration tests
 e2e.run: test-integration
@@ -163,7 +152,7 @@ run: go.build
 	@# To see other arguments that can be provided, run the command with --help instead
 	$(GO_OUT_DIR)/$(PROJECT_NAME) core start --debug
 
-.PHONY: manifests cobertura reviewable submodules fallthrough test-integration run install-crds uninstall-crds gen-kustomize-crds gen-install-doc
+.PHONY: manifests cobertura submodules fallthrough test-integration run install-crds uninstall-crds gen-kustomize-crds gen-install-doc
 
 # ====================================================================================
 # Special Targets
@@ -171,7 +160,6 @@ run: go.build
 define CROSSPLANE_MAKE_HELP
 Crossplane Targets:
     cobertura          Generate a coverage report for cobertura applying exclusions on generated files.
-    reviewable         Ensure a PR is ready for review.
     submodules         Update the submodules, such as the common build scripts.
     run                Run crossplane locally, out-of-cluster. Useful for development.
 
